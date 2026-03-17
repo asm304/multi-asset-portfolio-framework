@@ -22,8 +22,8 @@ The framework simulates how quantitative investment teams design, build, and eva
 6. Evaluate performance metrics  
 
 ## Results
-- ~10% annual return  
-- ~0.55 Sharpe ratio  
+- ~14% annual return  
+- ~0.62 Sharpe ratio  
 - Realistic turnover and drawdowns  
 
 ## Tech Stack
