@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+quant_env/
+venv/
+
+# Data files
+*.parquet
+*.csv
+
+# Mac files
+.DS_Store
