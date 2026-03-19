@@ -3,9 +3,9 @@ import numpy as np
 
 from src.data.loaders import load_price_signals, load_ridge_signal, load_xgb_signal
 from src.paths import PROCESSED_DIR
-from src.config import ACTIVE_PORTFOLIO_SIZE
+from src.config import ACTIVE_CANDIDATE_SIZE, ACTIVE_PORTFOLIO_SIZE
 
-SIGNAL_DIRECTIONS = {
+"""SIGNAL_DIRECTIONS = {
     "liquidity": 1,
     "mom_12_1": 1,
     "mom_6_1": 1,
@@ -13,7 +13,13 @@ SIGNAL_DIRECTIONS = {
     "vol_12m": -1,
     "beta_12m": -1,
     "ml_signal": 1,
-}
+}"""
+
+FEATURES = [
+    'res_mom_12_1',
+    'res_mom_9_1',
+    'res_mom_6_1',
+]
 
 def winsorize_signals(series,lower=.01,upper=.99):
     lo = series.quantile(lower)
@@ -26,7 +32,7 @@ def zscore_signals(series):
         return pd.Series(np.nan, index=series.index)
     return (series - series.mean()) / std
 
-def merge_ml_signal(
+"""def merge_ml_signal(
     signals: pd.DataFrame,
     model_name: str = "xgb",
 ) -> pd.DataFrame:
@@ -56,52 +62,85 @@ def merge_ml_signal(
         validate="one_to_one",
     )
 
-    return signals
+    return signals"""
 
 
 
 def normalize_signals(df):
     df = df.copy()
 
-    for col,direction in SIGNAL_DIRECTIONS.items():
+    for col in FEATURES:
         df[col] = df.groupby('date')[col].transform(winsorize_signals)  
         df[col + '_z'] = df.groupby('date')[col].transform(zscore_signals)  
-        df[col + '_z'] = direction * df[col + '_z']
+    
     return df
 
 
 def compute_alpha_score(df):
     df = df.copy()
+    
+    required = ["res_mom_12_1_z", "res_mom_9_1_z", "res_mom_6_1_z"]
 
-    z_cols = [f"{col}_z" for col in SIGNAL_DIRECTIONS.keys()]
-    df["alpha"] = df[z_cols].mean(axis=1)
-
+    df["alpha"] = np.where(
+        df[required].notna().all(axis=1),
+        0.0 * df["res_mom_12_1_z"] +
+        1.0 * df["res_mom_9_1_z"] +
+        0.0 * df["res_mom_6_1_z"],
+        np.nan
+    )
 
     return df
 
 def alpha_rank_and_select(df):
     df = df.copy()
 
-    df['rank'] = df.groupby('date')['alpha'].rank(
-        ascending=False,
-        method='first'
-    )
-    df['selected'] = df['rank'] <= ACTIVE_PORTFOLIO_SIZE
+    df["rank_long"] = df.groupby("date")["alpha"].rank(ascending=False, method="first")
+    df["rank_short"] = df.groupby("date")["alpha"].rank(ascending=True, method="first")
+
+    df["long_candidate"] = (df["rank_long"] <= ACTIVE_CANDIDATE_SIZE) & df["alpha"].notna() & df["fip_quality"].notna()
+    df["short_candidate"] = (df["rank_short"] <= ACTIVE_CANDIDATE_SIZE) & df["alpha"].notna() & df["fip_quality"].notna()
 
     return df
 
-def build_alpha_model(model_name: str = "xgb"):
+def apply_fip_filter(df):
+    df = df.copy()
+
+    long_fip_rank = (
+        df.loc[df["long_candidate"]]
+        .groupby("date")["fip_quality"]
+        .rank(ascending=False, method="first")
+    )
+
+    short_fip_rank = (
+        df.loc[df["short_candidate"]]
+        .groupby("date")["fip_quality"]
+        .rank(ascending=False, method="first")
+    )
+
+    df["fip_rank_long"] = np.nan
+    df["fip_rank_short"] = np.nan
+
+    df.loc[df["long_candidate"], "fip_rank_long"] = long_fip_rank
+    df.loc[df["short_candidate"], "fip_rank_short"] = short_fip_rank
+
+    df["long_selected"] = df["long_candidate"] & (df["fip_rank_long"] <= ACTIVE_PORTFOLIO_SIZE)
+    df["short_selected"] = df["short_candidate"] & (df["fip_rank_short"] <= ACTIVE_PORTFOLIO_SIZE)
+
+    return df
+
+def build_alpha_model():
     signals = load_price_signals().copy()
 
     signals["date"] = pd.to_datetime(signals["date"])
     signals = signals.sort_values(["date", "ticker"]).copy()
 
-    signals = merge_ml_signal(signals, model_name=model_name)
+   # signals = merge_ml_signal(signals, model_name=model_name)
     signals = normalize_signals(signals)
     signals = compute_alpha_score(signals)
     signals = alpha_rank_and_select(signals)
+    signals = apply_fip_filter(signals)
 
-    path = PROCESSED_DIR / f'alpha_model_{model_name}.parquet'
+    path = PROCESSED_DIR / f'alpha_model.parquet'
     signals.to_parquet(path, index=False)
 
     return signals

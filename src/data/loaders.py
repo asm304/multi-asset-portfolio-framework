@@ -123,6 +123,10 @@ def load_price_signals():
     path = PROCESSED_DIR / "price_signals.parquet"
     return pd.read_parquet(path)
 
+def load_alpha_model():
+    path = PROCESSED_DIR / 'alpha_model.parquet'
+    return pd.read_parquet(path)
+
 def load_xgb_alpha_model():
     path = PROCESSED_DIR / 'alpha_model_xgb.parquet'
     return pd.read_parquet(path)
