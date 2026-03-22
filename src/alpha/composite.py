@@ -83,9 +83,9 @@ def compute_alpha_score(df):
 
     df["alpha"] = np.where(
         df[required].notna().all(axis=1),
-        0.0 * df["res_mom_12_1_z"] +
-        1.0 * df["res_mom_9_1_z"] +
-        0.0 * df["res_mom_6_1_z"],
+        (1 / len(FEATURES)) * df["res_mom_12_1_z"] +
+        (1 / len(FEATURES)) * df["res_mom_9_1_z"] +
+        (1 / len(FEATURES)) * df["res_mom_6_1_z"],
         np.nan
     )
 

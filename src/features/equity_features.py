@@ -130,7 +130,7 @@ def build_price_signals():
     )
 
     monthly_stock = monthly_stock.merge(
-        vti_monthly[["date", "mkt_mom_12_1", "mkt_mom_9_1", "mkt_mom_6_1"]],
+        vti_monthly[["date", "mkt_mom_12_1", "mkt_mom_9_1", "mkt_mom_6_1", "mkt_ret_1m"]],
         on="date",
         how="left"
     )
@@ -210,7 +210,7 @@ def build_price_signals():
                 "date", "ticker",
                 "res_mom_12_1", "res_mom_9_1", "res_mom_6_1",
                 "mom_12_1", "mom_9_1", "mom_6_1",
-                "beta_36m", "fip_quality"
+                "beta_36m", "mkt_ret_1m", "fip_quality"
             ]
         ],
         on=["date", "ticker"],
