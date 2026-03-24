@@ -16,9 +16,10 @@ from src.config import ACTIVE_CANDIDATE_SIZE, ACTIVE_PORTFOLIO_SIZE
 }"""
 
 FEATURES = [
-    'res_mom_12_1',
-    'res_mom_9_1',
-    'res_mom_6_1',
+    'ra_res_mom_12_1',
+    'ra_res_mom_9_1',
+    'ra_res_mom_6_1',
+    'fip_quality'
 ]
 
 def winsorize_signals(series,lower=.01,upper=.99):
@@ -69,9 +70,13 @@ def zscore_signals(series):
 def normalize_signals(df):
     df = df.copy()
 
+    df['beta_bucket'] = df.groupby('date')['beta_36m'].transform(
+        lambda x: pd.qcut(x, 5, labels=False, duplicates='drop')
+    )
+
     for col in FEATURES:
-        df[col] = df.groupby('date')[col].transform(winsorize_signals)  
-        df[col + '_z'] = df.groupby('date')[col].transform(zscore_signals)  
+        df[col] = df.groupby(['date','beta_bucket'])[col].transform(winsorize_signals)  
+        df[col + '_z'] = df.groupby(['date', 'beta_bucket'])[col].transform(zscore_signals)  
     
     return df
 
@@ -79,13 +84,14 @@ def normalize_signals(df):
 def compute_alpha_score(df):
     df = df.copy()
     
-    required = ["res_mom_12_1_z", "res_mom_9_1_z", "res_mom_6_1_z"]
+    required = ["ra_res_mom_12_1_z", "ra_res_mom_9_1_z", "ra_res_mom_6_1_z", "fip_quality_z"]
 
     df["alpha"] = np.where(
         df[required].notna().all(axis=1),
-        (1 / len(FEATURES)) * df["res_mom_12_1_z"] +
-        (1 / len(FEATURES)) * df["res_mom_9_1_z"] +
-        (1 / len(FEATURES)) * df["res_mom_6_1_z"],
+        (.6 / 3) * df["ra_res_mom_12_1_z"] +
+        (.6 / 3) * df["ra_res_mom_9_1_z"] +
+        (.6 / 3) * df["ra_res_mom_6_1_z"] +
+        (0.4) * df["fip_quality_z"],
         np.nan
     )
 

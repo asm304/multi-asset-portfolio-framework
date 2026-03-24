@@ -1,13 +1,15 @@
 import pandas as pd
 import numpy as np
 
-from src.data.loaders import load_stock_prices,load_eligible_universe,load_etf_prices
+from src.data.loaders import load_stock_prices,load_eligible_universe,load_etf_prices, load_stock_sectors
 from src.paths import PROCESSED_DIR
 
 def build_price_signals():
     stock_prices = load_stock_prices().copy()
     eligible = load_eligible_universe().copy()
     etf_prices = load_etf_prices().copy()
+    sector_df = load_stock_sectors().copy()
+    sector_df["ticker"] = sector_df["ticker"].astype(str)
 
     stock_prices["date"] = pd.to_datetime(stock_prices["date"])
     eligible["date"] = pd.to_datetime(eligible["date"])
@@ -49,6 +51,16 @@ def build_price_signals():
         .pct_change(5)
         .groupby(monthly_stock['ticker'])
         .shift(1)
+    )
+
+    stock_prices["vol_12m"] = (
+        stock_prices.groupby("ticker")["ret_1d"]
+        .transform(lambda x: x.rolling(252, min_periods=252).std()) * np.sqrt(252)
+    )
+    vol_monthly = (
+        stock_prices.groupby(["ticker", "month"], as_index=False)
+        .tail(1)[["date", "ticker", "vol_12m"]]
+        .copy()
     )
 
     vti = etf_prices[etf_prices["ticker"] == "VTI"].copy()
@@ -141,16 +153,22 @@ def build_price_signals():
         how="left"
     )
 
-    monthly_stock["res_mom_12_1"] = (
-        monthly_stock["mom_12_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_12_1"]
+    monthly_stock = monthly_stock.merge(
+        vol_monthly,
+        on=['date', 'ticker'],
+        how='left'
     )
 
-    monthly_stock["res_mom_9_1"] = (
-        monthly_stock["mom_9_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_9_1"]
+    monthly_stock["ra_res_mom_12_1"] = (
+        (monthly_stock["mom_12_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_12_1"]) / monthly_stock['vol_12m']
     )
 
-    monthly_stock["res_mom_6_1"] = (
-        monthly_stock["mom_6_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_6_1"]
+    monthly_stock["ra_res_mom_9_1"] = (
+        (monthly_stock["mom_9_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_9_1"]) / monthly_stock['vol_12m']
+    )
+
+    monthly_stock["ra_res_mom_6_1"] = (
+        (monthly_stock["mom_6_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_6_1"]) / monthly_stock['vol_12m']
     )
 
     denom = (monthly_stock["pos_days_231"] + monthly_stock["neg_days_231"]).replace(0, np.nan)
@@ -163,6 +181,8 @@ def build_price_signals():
 
     """
     monthly_stock["rev_1m"] = -monthly_stock["ret_1m"]
+    
+    
 
     stock_prices["vol_12m"] = (
         stock_prices.groupby("ticker")["ret_1d"]
@@ -173,7 +193,7 @@ def build_price_signals():
         .tail(1)[["date", "ticker", "vol_12m"]]
         .copy()
     )
-
+    
     vti = etf_prices[etf_prices["ticker"] == "VTI"].copy()
     vti = vti.sort_values("date").copy()
     vti["mkt_ret_1d"] = vti["adj_close"].pct_change()
@@ -208,15 +228,22 @@ def build_price_signals():
         monthly_stock[
             [
                 "date", "ticker",
-                "res_mom_12_1", "res_mom_9_1", "res_mom_6_1",
+                "ra_res_mom_12_1", "ra_res_mom_9_1", "ra_res_mom_6_1",
                 "mom_12_1", "mom_9_1", "mom_6_1",
-                "beta_36m", "mkt_ret_1m", "fip_quality"
+                "beta_36m", "vol_12m", "mkt_ret_1m", "fip_quality"
             ]
         ],
         on=["date", "ticker"],
         how="left"
     )
 
+    signals = signals.merge(
+        sector_df[['ticker', 'sector', 'industry']],
+        on=['ticker'],
+        how='left'
+    )
+
+    signals = signals.dropna(subset=["sector"])
     """
     signals = signals.merge(
         vol_monthly,

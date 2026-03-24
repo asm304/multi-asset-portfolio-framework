@@ -3,6 +3,7 @@ import numpy as np
 
 from src.data.loaders import load_stock_prices
 from src.paths import PROCESSED_DIR
+from src.config import ACTIVE_PORTFOLIO_SIZE
 
 def build_monthly_returns():
     stock_prices = load_stock_prices().copy()
@@ -27,7 +28,160 @@ def build_monthly_returns():
 
     return monthly[["date", "ticker", "fwd_ret_1m"]].copy()
 
-def build_rebalanced_holdings(alpha_df, rebalance_freq="M"):
+def select_with_buffer(snap, prev_holdings, portfolio_size=ACTIVE_PORTFOLIO_SIZE, buffer_size=100):
+    snap = snap.sort_values("alpha", ascending=False).copy()
+    ranked_names = snap["ticker"].tolist()
+
+    rank_map = {ticker: rank + 1 for rank, ticker in enumerate(ranked_names)}
+
+    keep = [
+        ticker for ticker in prev_holdings
+        if ticker in rank_map and rank_map[ticker] <= buffer_size
+    ]
+
+    selected = list(keep)
+
+    for ticker in ranked_names:
+        if ticker not in selected:
+            selected.append(ticker)
+        if len(selected) >= portfolio_size:
+            break
+
+    return selected[:portfolio_size]
+
+
+def backtest_long_only_weighted(
+    alpha_df,
+    transaction_cost_bps=10,
+    rebalance_freq="Q",
+    use_buffer=True,
+    buffer_size=100
+):
+    df = alpha_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["date", "ticker"]).copy()
+
+    monthly_returns = build_monthly_returns().copy()
+    monthly_returns["date"] = pd.to_datetime(monthly_returns["date"])
+
+    df = df.merge(
+        monthly_returns,
+        on=["date", "ticker"],
+        how="left",
+        validate="one_to_one",
+    )
+
+    df = df.dropna(subset=["alpha", "fwd_ret_1m"]).copy()
+
+    df["rebalance_period"] = df["date"].dt.to_period(rebalance_freq)
+
+    all_dates = sorted(df["date"].drop_duplicates())
+    rebalance_dates = (
+        df.groupby("rebalance_period")["date"]
+        .min()
+        .sort_values()
+        .tolist()
+    )
+
+    rebalance_dates = set(rebalance_dates)
+
+    prev_weights = {}
+    tc = transaction_cost_bps / 10000.0
+
+    monthly_rows = []
+    holdings_rows = []
+
+    for dt in all_dates:
+        snap = df[df["date"] == dt].copy()
+
+        if dt in rebalance_dates:
+            if use_buffer:
+                selected_names = select_with_buffer(
+                    snap=snap,
+                    prev_holdings=set(prev_weights.keys()),
+                    portfolio_size=ACTIVE_PORTFOLIO_SIZE,
+                    buffer_size=buffer_size,
+                )
+                selected = (
+                    snap[snap["ticker"].isin(selected_names)]
+                    .sort_values("alpha", ascending=False)
+                    .copy()
+                )
+            else:
+                selected = (
+                    snap.sort_values("alpha", ascending=False)
+                    .head(ACTIVE_PORTFOLIO_SIZE)
+                    .copy()
+                )
+
+            selected = selected.dropna(subset=["vol_12m"]).copy()
+            selected["vol_12m"] = selected["vol_12m"].clip(lower=1e-6)
+            
+            n_holdings = len(selected)
+
+            if n_holdings > 0:
+                inv_vol = 1.0 / selected.set_index("ticker")["vol_12m"]
+                weights = inv_vol / inv_vol.sum()
+                new_weights = weights.to_dict()
+
+            else:
+                new_weights = {}
+
+            all_names = set(prev_weights.keys()) | set(new_weights.keys())
+
+            turnover = sum(
+                abs(new_weights.get(t, 0.0) - prev_weights.get(t, 0.0))
+                for t in all_names
+            )
+
+            cost = turnover * tc
+            prev_weights = new_weights.copy()
+
+        else:
+            turnover = 0.0
+            cost = 0.0
+
+        snap["weight"] = snap["ticker"].map(prev_weights).fillna(0.0)
+        snap["weighted_ret"] = snap["weight"] * snap["fwd_ret_1m"]
+
+        gross_ret = snap["weighted_ret"].sum()
+        net_ret = gross_ret - cost
+        n_holdings = len(prev_weights)
+
+        monthly_rows.append(
+            {
+                "date": dt,
+                "gross_ret": gross_ret,
+                "turnover": turnover,
+                "cost": cost,
+                "net_ret": net_ret,
+                "n_holdings": n_holdings,
+            }
+        )
+
+        current_holdings = snap[snap["weight"] > 0].copy()
+        if not current_holdings.empty:
+            holdings_rows.append(
+                current_holdings[["date", "ticker", "alpha", "vol_12m", "fwd_ret_1m", "weight"]]
+            )
+
+    backtest_df = pd.DataFrame(monthly_rows).sort_values("date").copy()
+    backtest_df["equity_curve"] = (1 + backtest_df["net_ret"]).cumprod()
+
+    if holdings_rows:
+        holdings_df = (
+            pd.concat(holdings_rows, ignore_index=True)
+            .sort_values(["date", "ticker"])
+            .copy()
+        )
+    else:
+        holdings_df = pd.DataFrame(
+            columns=["date", "ticker", "alpha", "vol_12m", "fwd_ret_1m", "weight"]
+        )
+
+    return backtest_df, holdings_df
+
+"""def build_rebalanced_holdings(alpha_df, rebalance_freq="Q"):
     df = alpha_df.copy()
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(["date", "ticker"]).copy()
@@ -77,7 +231,7 @@ def build_rebalanced_holdings(alpha_df, rebalance_freq="M"):
 
 
 
-def backtest_long_short_equal_weight(alpha_df,transaction_cost_bps=20, rebalance_freq='M'):
+def backtest_long_short_equal_weight(alpha_df,transaction_cost_bps=20, rebalance_freq='Q'):
     alpha_df = alpha_df.copy()
     alpha_df["date"] = pd.to_datetime(alpha_df["date"])
 
@@ -114,11 +268,11 @@ def backtest_long_short_equal_weight(alpha_df,transaction_cost_bps=20, rebalance
     short_mask = portfolio["side"] == "short"
 
     portfolio.loc[long_mask, "weight"] = (
-        0.5 / portfolio.loc[long_mask, "n_longs"]
+        1.0 / portfolio.loc[long_mask, "n_longs"]
     )
 
     portfolio.loc[short_mask, "weight"] = (
-        -0.5 / portfolio.loc[short_mask, "n_shorts"]
+        -0.0 / portfolio.loc[short_mask, "n_shorts"]
     )
 
     portfolio["weighted_ret"] = portfolio["weight"] * portfolio["fwd_ret_1m"]
@@ -169,7 +323,7 @@ def backtest_long_short_equal_weight(alpha_df,transaction_cost_bps=20, rebalance
     monthly_portfolio["equity_curve"] = (1 + monthly_portfolio["net_ret"]).cumprod()
 
     return monthly_portfolio, portfolio
-
+"""
 
 def compute_performance_metrics(backtest_df):
     backtest_df = backtest_df.copy()
@@ -185,8 +339,7 @@ def compute_performance_metrics(backtest_df):
                 "sharpe": np.nan,
                 "max_drawdown": np.nan,
                 "avg_turnover": np.nan,
-                "avg_n_longs": np.nan,
-                "avg_n_shorts": np.nan
+                "avg_n_holdings": np.nan,
             }
         )
 
@@ -211,18 +364,19 @@ def compute_performance_metrics(backtest_df):
         "sharpe": sharpe,
         "max_drawdown": max_drawdown,
         "avg_turnover": backtest_df["turnover"].mean(),
-        "avg_n_longs": backtest_df["n_longs"].mean(),
-        "avg_n_shorts": backtest_df["n_shorts"].mean()
+        "avg_n_holdings": backtest_df["n_holdings"].mean(),
     }
 
     return pd.Series(metrics)
 
-def run_backtest(alpha_df, transaction_cost_bps=20, rebalance_freq='M', save_output=True, run_name='default'):
+def run_backtest(alpha_df, transaction_cost_bps=10, rebalance_freq='Q', save_output=True, run_name='default', use_buffer=True, buffer_size=100):
     
-    backtest_df, holdings_df = backtest_long_short_equal_weight(
+    backtest_df, holdings_df = backtest_long_only_weighted(
         alpha_df=alpha_df,
         transaction_cost_bps=transaction_cost_bps,
         rebalance_freq=rebalance_freq,
+        use_buffer=use_buffer,
+        buffer_size=buffer_size,
     )
 
     metrics = compute_performance_metrics(backtest_df)
