@@ -3,7 +3,7 @@ import numpy as np
 
 from src.data.loaders import load_stock_prices
 from src.paths import PROCESSED_DIR
-from src.config import ACTIVE_PORTFOLIO_SIZE
+from src.config import ACTIVE_PORTFOLIO_SIZE, SECTOR_CAPACITY
 
 def build_monthly_returns():
     stock_prices = load_stock_prices().copy()
@@ -28,34 +28,62 @@ def build_monthly_returns():
 
     return monthly[["date", "ticker", "fwd_ret_1m"]].copy()
 
-def select_with_buffer(snap, prev_holdings, portfolio_size=ACTIVE_PORTFOLIO_SIZE, buffer_size=100):
+def select_with_buffer_and_sector_caps(snap, prev_holdings, portfolio_size=ACTIVE_PORTFOLIO_SIZE, buffer_size=100, max_sector_fraction=SECTOR_CAPACITY):
     snap = snap.sort_values("alpha", ascending=False).copy()
+    snap = snap.dropna(subset=["sector"]).copy()
+
     ranked_names = snap["ticker"].tolist()
 
     rank_map = {ticker: rank + 1 for rank, ticker in enumerate(ranked_names)}
+
+    sector_map = snap.set_index("ticker")["sector"].to_dict()
+    max_names_per_sector = max(1, int(np.floor(portfolio_size * max_sector_fraction)))
+
+    selected = []
+    sector_counts = {}
 
     keep = [
         ticker for ticker in prev_holdings
         if ticker in rank_map and rank_map[ticker] <= buffer_size
     ]
 
-    selected = list(keep)
+    for ticker in keep:
+        sector = sector_map.get(ticker)
+        if sector is None:
+            continue
+        if sector_counts.get(sector, 0) >= max_names_per_sector:
+            continue
+        selected.append(ticker)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
 
     for ticker in ranked_names:
-        if ticker not in selected:
-            selected.append(ticker)
+        if ticker in selected:
+            continue
+
+        sector = sector_map.get(ticker)
+        if sector is None:
+            continue
+
+        if sector_counts.get(sector, 0) >= max_names_per_sector:
+            continue
+
+        selected.append(ticker)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+
         if len(selected) >= portfolio_size:
             break
 
     return selected[:portfolio_size]
-
+    
 
 def backtest_long_only_weighted(
     alpha_df,
     transaction_cost_bps=10,
     rebalance_freq="Q",
     use_buffer=True,
-    buffer_size=100
+    buffer_size=100,
+    use_sector_caps=True,
+    max_sector_fraction=SECTOR_CAPACITY,
 ):
     df = alpha_df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -73,17 +101,24 @@ def backtest_long_only_weighted(
 
     df = df.dropna(subset=["alpha", "fwd_ret_1m"]).copy()
 
-    df["rebalance_period"] = df["date"].dt.to_period(rebalance_freq)
-
     all_dates = sorted(df["date"].drop_duplicates())
-    rebalance_dates = (
-        df.groupby("rebalance_period")["date"]
-        .min()
-        .sort_values()
-        .tolist()
-    )
 
-    rebalance_dates = set(rebalance_dates)
+    if rebalance_freq == "M":
+        step = 1
+    elif rebalance_freq == "Q":
+        step = 3
+    elif rebalance_freq == "6M":
+        step = 6
+    else:
+        raise ValueError(f"Unsupported rebalance frequency: {rebalance_freq}")
+
+    date_map = pd.DataFrame({"date": all_dates})
+    date_map = date_map.sort_values("date").reset_index(drop=True)
+    date_map["month_idx"] = np.arange(len(date_map))
+
+    rebalance_dates = set(
+        date_map.loc[date_map["month_idx"] % step == 0, "date"]
+    )
 
     prev_weights = {}
     tc = transaction_cost_bps / 10000.0
@@ -95,18 +130,43 @@ def backtest_long_only_weighted(
         snap = df[df["date"] == dt].copy()
 
         if dt in rebalance_dates:
-            if use_buffer:
-                selected_names = select_with_buffer(
+            if use_sector_caps:
+                selected_names = select_with_buffer_and_sector_caps(
                     snap=snap,
-                    prev_holdings=set(prev_weights.keys()),
+                    prev_holdings=set(prev_weights.keys()) if use_buffer else set(),
                     portfolio_size=ACTIVE_PORTFOLIO_SIZE,
-                    buffer_size=buffer_size,
+                    buffer_size=buffer_size if use_buffer else 0,
+                    max_sector_fraction=max_sector_fraction
                 )
                 selected = (
                     snap[snap["ticker"].isin(selected_names)]
                     .sort_values("alpha", ascending=False)
                     .copy()
                 )
+
+            elif use_buffer and not use_sector_caps:
+                ranked = snap.sort_values("alpha", ascending=False).copy()
+                ranked_names = ranked["ticker"].tolist()
+                rank_map = {ticker: rank + 1 for rank, ticker in enumerate(ranked_names)}
+
+                keep = [
+                    ticker for ticker in prev_weights.keys()
+                    if ticker in rank_map and rank_map[ticker] <= buffer_size
+                ]
+
+                selected_names = list(keep)
+                for ticker in ranked_names:
+                    if ticker not in selected_names:
+                        selected_names.append(ticker)
+                    if len(selected_names) >= ACTIVE_PORTFOLIO_SIZE:
+                        break
+
+                selected = (
+                    snap[snap["ticker"].isin(selected_names)]
+                    .sort_values("alpha", ascending=False)
+                    .copy()
+                )
+
             else:
                 selected = (
                     snap.sort_values("alpha", ascending=False)
@@ -161,9 +221,9 @@ def backtest_long_only_weighted(
 
         current_holdings = snap[snap["weight"] > 0].copy()
         if not current_holdings.empty:
-            holdings_rows.append(
-                current_holdings[["date", "ticker", "alpha", "vol_12m", "fwd_ret_1m", "weight"]]
-            )
+            keep_cols = ["date", "ticker", "alpha", "vol_12m", "sector", "fwd_ret_1m", "weight"]
+            current_holdings = current_holdings[[c for c in keep_cols if c in current_holdings.columns]]
+            holdings_rows.append(current_holdings)
 
     backtest_df = pd.DataFrame(monthly_rows).sort_values("date").copy()
     backtest_df["equity_curve"] = (1 + backtest_df["net_ret"]).cumprod()
@@ -176,7 +236,7 @@ def backtest_long_only_weighted(
         )
     else:
         holdings_df = pd.DataFrame(
-            columns=["date", "ticker", "alpha", "vol_12m", "fwd_ret_1m", "weight"]
+            columns=["date", "ticker", "alpha", "vol_12m", "sector", "fwd_ret_1m", "weight"]
         )
 
     return backtest_df, holdings_df
@@ -369,7 +429,16 @@ def compute_performance_metrics(backtest_df):
 
     return pd.Series(metrics)
 
-def run_backtest(alpha_df, transaction_cost_bps=10, rebalance_freq='Q', save_output=True, run_name='default', use_buffer=True, buffer_size=100):
+def run_backtest(
+    alpha_df,
+    transaction_cost_bps=10,
+    rebalance_freq='Q',
+    save_output=True,
+    run_name='default',
+    use_buffer=True,
+    buffer_size=100,
+    use_sector_caps=True,
+    max_sector_fraction=SECTOR_CAPACITY):
     
     backtest_df, holdings_df = backtest_long_only_weighted(
         alpha_df=alpha_df,
@@ -377,6 +446,8 @@ def run_backtest(alpha_df, transaction_cost_bps=10, rebalance_freq='Q', save_out
         rebalance_freq=rebalance_freq,
         use_buffer=use_buffer,
         buffer_size=buffer_size,
+        use_sector_caps=use_sector_caps,
+        max_sector_fraction=max_sector_fraction
     )
 
     metrics = compute_performance_metrics(backtest_df)
