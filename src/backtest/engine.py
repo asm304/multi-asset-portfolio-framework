@@ -79,7 +79,7 @@ def select_with_buffer_and_sector_caps(snap, prev_holdings, portfolio_size=ACTIV
 def backtest_long_only_weighted(
     alpha_df,
     transaction_cost_bps=10,
-    rebalance_freq="Q",
+    rebalance_freq="6M",
     use_buffer=True,
     buffer_size=100,
     use_sector_caps=True,
@@ -432,7 +432,7 @@ def compute_performance_metrics(backtest_df):
 def run_backtest(
     alpha_df,
     transaction_cost_bps=10,
-    rebalance_freq='Q',
+    rebalance_freq='6M',
     save_output=True,
     run_name='default',
     use_buffer=True,
