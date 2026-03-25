@@ -70,7 +70,7 @@ def zscore_signals(series):
 def normalize_signals(df):
     df = df.copy()
 
-    df['beta_bucket'] = df.groupby('date')['beta_36m'].transform(
+    df['beta_bucket'] = df.groupby('date')['beta_12m'].transform(
         lambda x: pd.qcut(x, 5, labels=False, duplicates='drop')
     )
 

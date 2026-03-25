@@ -89,22 +89,22 @@ def build_price_signals():
     )
 
     def rolling_beta(group):
-        cov = group["ret_1d"].rolling(756, min_periods=252).cov(group["mkt_ret_1d"])
-        var = group["mkt_ret_1d"].rolling(756, min_periods=252).var()
+        cov = group["ret_1d"].rolling(252, min_periods=126).cov(group["mkt_ret_1d"])
+        var = group["mkt_ret_1d"].rolling(252, min_periods=126).var()
         return cov / var
 
-    beta_df["beta_36m"] = (
+    beta_df["beta_12m"] = (
         beta_df.groupby("ticker")
         .apply(rolling_beta, include_groups=False)
         .reset_index(level=0, drop=True)
     )
 
-    beta_df["beta_36m"] = beta_df["beta_36m"].clip(-5, 5)
+    beta_df["beta_12m"] = beta_df["beta_12m"].clip(-5, 5)
     beta_df["month"] = beta_df["date"].dt.to_period("M")
 
     beta_monthly = (
         beta_df.groupby(["ticker", "month"], as_index=False)
-        .tail(1)[["date", "ticker", "beta_36m"]]
+        .tail(1)[["date", "ticker", "beta_12m"]]
         .copy()
     )
 
@@ -160,15 +160,15 @@ def build_price_signals():
     )
 
     monthly_stock["ra_res_mom_12_1"] = (
-        (monthly_stock["mom_12_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_12_1"]) / monthly_stock['vol_12m']
+        (monthly_stock["mom_12_1"] - monthly_stock["beta_12m"] * monthly_stock["mkt_mom_12_1"]) / monthly_stock['vol_12m']
     )
 
     monthly_stock["ra_res_mom_9_1"] = (
-        (monthly_stock["mom_9_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_9_1"]) / monthly_stock['vol_12m']
+        (monthly_stock["mom_9_1"] - monthly_stock["beta_12m"] * monthly_stock["mkt_mom_9_1"]) / monthly_stock['vol_12m']
     )
 
     monthly_stock["ra_res_mom_6_1"] = (
-        (monthly_stock["mom_6_1"] - monthly_stock["beta_36m"] * monthly_stock["mkt_mom_6_1"]) / monthly_stock['vol_12m']
+        (monthly_stock["mom_6_1"] - monthly_stock["beta_12m"] * monthly_stock["mkt_mom_6_1"]) / monthly_stock['vol_12m']
     )
 
     denom = (monthly_stock["pos_days_231"] + monthly_stock["neg_days_231"]).replace(0, np.nan)
@@ -230,7 +230,7 @@ def build_price_signals():
                 "date", "ticker",
                 "ra_res_mom_12_1", "ra_res_mom_9_1", "ra_res_mom_6_1",
                 "mom_12_1", "mom_9_1", "mom_6_1",
-                "beta_36m", "vol_12m", "mkt_ret_1m", "fip_quality"
+                "beta_12m", "vol_12m", "mkt_ret_1m", "fip_quality"
             ]
         ],
         on=["date", "ticker"],

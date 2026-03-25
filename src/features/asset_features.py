@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.data.loaders import load_etf_prices, load_backtest_results
+from src.data.loaders import load_etf_prices
 from src.paths import PROCESSED_DIR
 
 def build_monthly_etf_returns():
@@ -27,9 +27,9 @@ def build_monthly_etf_returns():
 
     return monthly_returns
 
-def build_allocation_return_table():
+def build_allocation_return_table(backtest_df):
     etf_returns = build_monthly_etf_returns().copy()
-    backtest_df = load_backtest_results().copy()
+    backtest_df = backtest_df.copy()
 
     etf_returns["date"] = pd.to_datetime(etf_returns["date"])
     backtest_df["date"] = pd.to_datetime(backtest_df["date"])
@@ -52,6 +52,7 @@ def build_allocation_return_table():
     ).sort_values("date").copy()
 
     allocation_df = allocation_df.drop(columns=["VTI"], errors="ignore")
+    allocation_df = allocation_df.dropna().copy()
 
     path = PROCESSED_DIR / "allocation_returns.parquet"
     allocation_df.to_parquet(path, index=False)

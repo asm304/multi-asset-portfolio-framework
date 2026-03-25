@@ -8,7 +8,7 @@ import time
 
 
 def download_etf_prices(tickers,start,end):
-    data = yf.download(tickers,start=start,end=end)['Close']
+    data = yf.download(tickers,start=start,end=end, auto_adjust=True, progress=False, threads=True)['Close']
     data = data.stack().reset_index()
     data.columns = ["date", "ticker", "adj_close"]
 
@@ -236,6 +236,42 @@ def load_xgb_signal():
 def load_stock_sectors():
     path = RAW_DIR / "stock_sectors.parquet"
     return pd.read_parquet(path)
+
+def load_allocation_weights():
+    path = PROCESSED_DIR / "allocation_weights.parquet"
+    return pd.read_parquet(path)
+
+def load_allocation_backtest():
+    path = PROCESSED_DIR / 'allocation_backtest.parquet'
+    return pd.read_parquet(path)
+
+def load_active_weights():
+    path = PROCESSED_DIR / 'active_weights.parquet'
+    return pd.read_parquet(path)
+
+def load_eligile_etfs():
+    path = PROCESSED_DIR / 'etf_eligibility.parquet'
+    return pd.read_parquet(path)
+
+def load_portfolio_weights():
+    path = PROCESSED_DIR / 'allocation_weights_hierarchical.parquet'
+    return pd.read_parquet(path)
+
+def load_hierarchal_portfolio_backtest():
+    path = PROCESSED_DIR / 'allocation_backtest_hierarchical.parquet'
+    return pd.read_parquet(path)
+
+def load_risk_free():
+    path = RAW_DIR / "risk_free.parquet"
+    return pd.read_parquet(path)
+
+def load_competitive_hierarchal_portfolio_weights():
+    path = PROCESSED_DIR / 'allocation_weights_hierarchical_competitive.parquet'
+    return pd.read_parquet(path)
+
+def load_competitive_hierarchal_portfolio_backtest():
+    path = PROCESSED_DIR / "allocation_backtest_hierarchical_competitive.parquet"
+    return pd.read_parquet(path)  
 
 def load_fundamentals():
     pass
