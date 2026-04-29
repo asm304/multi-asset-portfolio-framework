@@ -81,12 +81,15 @@ def build_price_signals():
     vti_monthly["mkt_mom_6_1"] = vti_monthly['adj_close'].pct_change(5).shift(1)
 
     vti["mkt_ret_1d"] = vti['adj_close'].pct_change()
+    
 
     beta_df = stock_prices.merge(
         vti[["date", "mkt_ret_1d"]],
         on="date",
         how="left"
     )
+
+    beta_df = beta_df.sort_values(["ticker", "date"]).copy()
 
     def rolling_beta(group):
         cov = group["ret_1d"].rolling(252, min_periods=126).cov(group["mkt_ret_1d"])

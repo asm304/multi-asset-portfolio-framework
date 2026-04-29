@@ -31,7 +31,7 @@ def get_active_band(target_weight):
         return 0.40, 0.75
     elif np.isclose(target_weight, 0.40):
         return 0.25, 0.60
-    else:  # risk-off regime from 0.20 target
+    else:  
         return 0.20, 0.45
 
 
