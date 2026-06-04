@@ -8,6 +8,9 @@ venv/
 # Data files
 *.parquet
 *.csv
+data/raw/
+*.log
+failed_tickers.txt
 
 # Mac files
 .DS_Store

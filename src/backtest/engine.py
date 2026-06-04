@@ -84,6 +84,7 @@ def backtest_long_only_weighted(
     buffer_size=100,
     use_sector_caps=True,
     max_sector_fraction=SECTOR_CAPACITY,
+    weight_method="inv_vol"
 ):
     df = alpha_df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -174,16 +175,39 @@ def backtest_long_only_weighted(
                     .copy()
                 )
 
-            selected = selected.dropna(subset=["vol_12m"]).copy()
-            selected["vol_12m"] = selected["vol_12m"].clip(lower=1e-6)
-            
             n_holdings = len(selected)
 
             if n_holdings > 0:
-                inv_vol = 1.0 / selected.set_index("ticker")["vol_12m"]
-                weights = inv_vol / inv_vol.sum()
-                new_weights = weights.to_dict()
+                if weight_method == "equal":
+                    new_weights = {
+                        ticker: 1.0 / n_holdings
+                        for ticker in selected["ticker"]
+                    }
 
+                elif weight_method == "inv_vol":
+                    selected = selected.dropna(subset=["vol_12m"]).copy()
+                    selected["vol_12m"] = selected["vol_12m"].clip(lower=1e-6)
+
+                    inv_vol = 1.0 / selected.set_index("ticker")["vol_12m"]
+                    weights = inv_vol / inv_vol.sum()
+                    new_weights = weights.to_dict()
+
+                elif weight_method == "alpha":
+                    selected = selected.dropna(subset=["alpha"]).copy()
+                    scores = selected.set_index("ticker")["alpha"].clip(lower=0)
+
+                    if scores.sum() > 0:
+                        weights = scores / scores.sum()
+                    else:
+                        weights = pd.Series(
+                            1.0 / len(selected),
+                            index=selected["ticker"]
+                        )
+
+                    new_weights = weights.to_dict()
+
+                else:
+                    raise ValueError(f"Unsupported weight_method: {weight_method}")
             else:
                 new_weights = {}
 
@@ -438,7 +462,8 @@ def run_backtest(
     use_buffer=True,
     buffer_size=100,
     use_sector_caps=True,
-    max_sector_fraction=SECTOR_CAPACITY):
+    max_sector_fraction=SECTOR_CAPACITY,
+    weight_method="inv_vol"):
     
     backtest_df, holdings_df = backtest_long_only_weighted(
         alpha_df=alpha_df,
@@ -447,7 +472,8 @@ def run_backtest(
         use_buffer=use_buffer,
         buffer_size=buffer_size,
         use_sector_caps=use_sector_caps,
-        max_sector_fraction=max_sector_fraction
+        max_sector_fraction=max_sector_fraction,
+        weight_method=weight_method
     )
 
     metrics = compute_performance_metrics(backtest_df)

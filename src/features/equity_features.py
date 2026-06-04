@@ -1,15 +1,13 @@
 import pandas as pd
 import numpy as np
 
-from src.data.loaders import load_stock_prices,load_eligible_universe,load_etf_prices, load_stock_sectors
+from src.data.loaders import load_stock_prices,load_eligible_universe,load_etf_prices, load_stock_sectors, load_price_signals, load_fundamental_signals
 from src.paths import PROCESSED_DIR
 
 def build_price_signals():
     stock_prices = load_stock_prices().copy()
     eligible = load_eligible_universe().copy()
     etf_prices = load_etf_prices().copy()
-    sector_df = load_stock_sectors().copy()
-    sector_df["ticker"] = sector_df["ticker"].astype(str)
 
     stock_prices["date"] = pd.to_datetime(stock_prices["date"])
     eligible["date"] = pd.to_datetime(eligible["date"])
@@ -55,11 +53,13 @@ def build_price_signals():
 
     stock_prices["vol_12m"] = (
         stock_prices.groupby("ticker")["ret_1d"]
-        .transform(lambda x: x.rolling(252, min_periods=252).std()) * np.sqrt(252)
+        .transform(lambda x: x.rolling(252, min_periods=126).std()) * np.sqrt(252)
     )
+    stock_prices["neg_vol_12m"] = -stock_prices["vol_12m"]
+    
     vol_monthly = (
         stock_prices.groupby(["ticker", "month"], as_index=False)
-        .tail(1)[["date", "ticker", "vol_12m"]]
+        .tail(1)[["date", "ticker", "vol_12m", "neg_vol_12m"]]
         .copy()
     )
 
@@ -233,20 +233,13 @@ def build_price_signals():
                 "date", "ticker",
                 "ra_res_mom_12_1", "ra_res_mom_9_1", "ra_res_mom_6_1",
                 "mom_12_1", "mom_9_1", "mom_6_1",
-                "beta_12m", "vol_12m", "mkt_ret_1m", "fip_quality"
+                "beta_12m", "vol_12m", "neg_vol_12m", "mkt_ret_1m", "fip_quality"
             ]
         ],
         on=["date", "ticker"],
         how="left"
     )
 
-    signals = signals.merge(
-        sector_df[['ticker', 'sector', 'industry']],
-        on=['ticker'],
-        how='left'
-    )
-
-    signals = signals.dropna(subset=["sector"])
     """
     signals = signals.merge(
         vol_monthly,
@@ -267,3 +260,33 @@ def build_price_signals():
     signals.to_parquet(path, index=False)
 
     return signals
+
+def build_all_signals():
+
+    price_signals = load_price_signals().copy()
+    fundamental_signals = load_fundamental_signals().copy()
+
+    sector_df = load_stock_sectors().copy()
+
+    equity_signals = price_signals.merge(
+        fundamental_signals,
+        on=["date", "ticker"],
+        how="left",
+        validate="one_to_one"
+    )
+
+    equity_signals = equity_signals.merge(
+        sector_df[['ticker', 'sector', 'industry']],
+        on=['ticker'],
+        how='left'
+    )
+
+    equity_signals = equity_signals.dropna(subset=["sector"])
+
+    path = PROCESSED_DIR / "final_signals.parquet"
+    equity_signals.to_parquet(path, index=False)
+
+    return equity_signals
+
+
+    

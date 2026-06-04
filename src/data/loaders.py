@@ -2,7 +2,6 @@ import pandas as pd
 import yfinance as yf
 from src.paths import RAW_DIR, PROCESSED_DIR
 import re
-import time
 
 
 
@@ -62,76 +61,25 @@ def get_stock_tickers():
 
     return tickers
 
-def download_stock_sectors_from_universe():
-    eligible = load_eligible_universe().copy()
-    tickers = sorted(eligible["ticker"].dropna().unique().tolist())
+def download_stock_sectors_from_eodhd():
+    
+    meta = load_metadata()
 
-    sector_rows = []
+    sector_df = meta[[
+        "ticker",
+        "general_Sector",
+        "general_Industry",
+    ]].copy()
 
-    print(f"Fetching sector info for {len(tickers)} tickers...")
+    sector_df = sector_df.rename(columns={
+        "general_Sector": "sector",
+        "general_Industry": "industry",
+    })
 
-    for i, symbol in enumerate(tickers, 1):
-        if i % 100 == 0:
-            print(f"Processed {i} tickers")
+    sector_df["sector_missing"] = sector_df["sector"].isna()
 
-        try:
-            info = yf.Ticker(symbol).info
-            sector = info.get("sector")
-            industry = info.get("industry")
-
-            fetch_status = "ok"
-            if sector is None and industry is None:
-                fetch_status = "missing_metadata"
-
-
-            sector_rows.append({
-                "ticker": symbol,
-                "sector": sector,
-                "industry": industry,
-                "fetch_status": fetch_status,
-                "error_msg": None,
-            })
-
-        except Exception as e:
-
-            if "Too Many Requests" in str(e):
-                print(f"Rate limited at {symbol}, sleeping...")
-                time.sleep(5)
-
-                try:
-                    ticker = yf.Ticker(symbol)
-                    info = ticker.info
-
-                    sector = info.get("sector")
-                    industry = info.get("industry")
-
-                    sector_rows.append({
-                        "ticker": symbol,
-                        "sector": sector,
-                        "industry": industry,
-                        "fetch_status": "retry_ok",
-                        "error_msg": None,
-                    })
-
-                except Exception as e2:
-                    sector_rows.append({
-                        "ticker": symbol,
-                        "sector": None,
-                        "industry": None,
-                        "fetch_status": "error",
-                        "error_msg": str(e2),
-                    })
-            else:
-                sector_rows.append({
-                    "ticker": symbol,
-                    "sector": None,
-                    "industry": None,
-                    "fetch_status": "error",
-                    "error_msg": str(e),
-                })
-        time.sleep(0.1)
-
-    sector_df = pd.DataFrame(sector_rows).drop_duplicates(subset=["ticker"])
+    sector_df = sector_df.drop_duplicates(subset=["ticker"])
+    
 
     path = RAW_DIR / "stock_sectors.parquet"
     sector_df.to_parquet(path, index=False)
@@ -192,6 +140,24 @@ def load_stock_prices():
 def load_stock_universe():
     path = PROCESSED_DIR / "stock_universe.parquet"
     return pd.read_parquet(path)
+
+def load_fund_income_quarterly():
+    return pd.read_parquet(PROCESSED_DIR / "fund_income_quarterly.parquet")
+
+def load_fund_balance_quarterly():
+    return pd.read_parquet(PROCESSED_DIR / "fund_balance_quarterly.parquet")
+
+def load_fund_cashflow_quarterly():
+    return pd.read_parquet(PROCESSED_DIR / "fund_cashflow_quarterly.parquet")
+
+def load_earnings_history():
+    return pd.read_parquet(PROCESSED_DIR / "earnings_history.parquet")
+
+def load_earnings_trend_quarterly():
+    return pd.read_parquet(PROCESSED_DIR / "earnings_trend_quarterly.parquet")
+
+def load_metadata():
+    return pd.read_parquet(PROCESSED_DIR / "fund_metadata.parquet")
     
 def load_eligible_universe():
     path = PROCESSED_DIR / 'eligible_universe.parquet'
@@ -200,6 +166,22 @@ def load_eligible_universe():
 def load_price_signals():
     path = PROCESSED_DIR / "price_signals.parquet"
     return pd.read_parquet(path)
+
+def load_debug_fundamental_signals():
+    path = PROCESSED_DIR / 'debug_fundamental_signals.parquet'
+    return pd.read_parquet(path)
+
+def load_fundamental_signals():
+    path = PROCESSED_DIR / 'fundamental_signals.parquet'
+    return pd.read_parquet(path)
+
+def load_final_signals():
+    path = PROCESSED_DIR / 'final_signals.parquet'
+    return pd.read_parquet(path)
+
+def load_alpha_signals():
+    df = pd.read_parquet(PROCESSED_DIR / "alpha_signals.parquet")
+    return df["signal"].dropna().tolist()
 
 def load_alpha_model():
     path = PROCESSED_DIR / 'alpha_model.parquet'
@@ -272,9 +254,3 @@ def load_competitive_hierarchal_portfolio_weights():
 def load_competitive_hierarchal_portfolio_backtest():
     path = PROCESSED_DIR / "allocation_backtest_hierarchical_competitive.parquet"
     return pd.read_parquet(path)  
-
-def load_fundamentals():
-    pass
-
-def load_metadata():
-    pass
